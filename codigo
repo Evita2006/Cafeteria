@@ -1,0 +1,180 @@
+from config import DB_FILE
+
+import os
+import sqlite3
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import List
+
+# -------------------------
+# Configuración simple
+# -------------------------
+ENV = os.getenv("SMARTCOFFEE_ENV", "dev")  # "dev", "test" o "prod"
+DB_DIR = "data"
+os.makedirs(DB_DIR, exist_ok=True)
+
+DB_FILE = os.path.join(DB_DIR, f"smartcoffee_{ENV}.db")
+
+# -------------------------
+# Generador de IDs únicos
+# -------------------------
+def gen_id(prefix=""):
+    return prefix + str(uuid.uuid4())
+
+# -------------------------
+# Clases del modelo
+# -------------------------
+@dataclass
+class Cliente:
+    id_cliente: str = field(default_factory=lambda: gen_id("cli_"))
+    nombre: str = ""
+    email: str = ""
+    puntos_fidelidad: int = 0
+
+@dataclass
+class Empleado:
+    id_empleado: str = field(default_factory=lambda: gen_id("emp_"))
+    nombre: str = ""
+    rol: str = ""
+    turno: str = ""
+
+@dataclass
+class Producto:
+    id_producto: str = field(default_factory=lambda: gen_id("prod_"))
+    nombre: str = ""
+    tipo: str = ""
+    precio: float = 0.0
+
+@dataclass
+class PedidoItem:
+    id_producto: str
+    cantidad: int
+    precio_unitario: float
+
+@dataclass
+class Pedido:
+    id_pedido: str = field(default_factory=lambda: gen_id("ped_"))
+    id_cliente: str = ""
+    id_empleado: str = ""
+    fecha: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    items: List[PedidoItem] = field(default_factory=list)
+
+    def calcular_total(self):
+        return sum(i.cantidad * i.precio_unitario for i in self.items)
+
+# -------------------------
+# Función para crear tablas
+# -------------------------
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    cur = conn.cursor()
+
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS Cliente (
+        id_cliente TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        email TEXT,
+        puntos_fidelidad INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS Empleado (
+        id_empleado TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        rol TEXT,
+        turno TEXT
+    );
+    CREATE TABLE IF NOT EXISTS Producto (
+        id_producto TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        tipo TEXT,
+        precio REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS Pedido (
+        id_pedido TEXT PRIMARY KEY,
+        id_cliente TEXT NOT NULL,
+        id_empleado TEXT NOT NULL,
+        fecha TEXT,
+        total REAL,
+        FOREIGN KEY(id_cliente) REFERENCES Cliente(id_cliente),
+        FOREIGN KEY(id_empleado) REFERENCES Empleado(id_empleado)
+    );
+    CREATE TABLE IF NOT EXISTS Pedido_Producto (
+        id_pedido TEXT,
+        id_producto TEXT,
+        cantidad INTEGER,
+        precio_unitario REAL,
+        PRIMARY KEY (id_pedido, id_producto),
+        FOREIGN KEY(id_pedido) REFERENCES Pedido(id_pedido) ON DELETE CASCADE,
+        FOREIGN KEY(id_producto) REFERENCES Producto(id_producto)
+    );
+    """)
+    conn.commit()
+    return conn
+
+# -------------------------
+# Funciones de inserción
+# -------------------------
+def insert_cliente(conn, c: Cliente):
+    conn.execute(
+        "INSERT OR IGNORE INTO Cliente VALUES (?, ?, ?, ?)",
+        (c.id_cliente, c.nombre, c.email, c.puntos_fidelidad)
+    )
+
+def insert_empleado(conn, e: Empleado):
+    conn.execute(
+        "INSERT OR IGNORE INTO Empleado VALUES (?, ?, ?, ?)",
+        (e.id_empleado, e.nombre, e.rol, e.turno)
+    )
+
+def insert_producto(conn, p: Producto):
+    conn.execute(
+        "INSERT OR IGNORE INTO Producto VALUES (?, ?, ?, ?)",
+        (p.id_producto, p.nombre, p.tipo, p.precio)
+    )
+
+def insert_pedido(conn, pedido: Pedido):
+    total = pedido.calcular_total()
+    conn.execute(
+        "INSERT OR IGNORE INTO Pedido VALUES (?, ?, ?, ?, ?)",
+        (pedido.id_pedido, pedido.id_cliente, pedido.id_empleado, pedido.fecha, total)
+    )
+    for item in pedido.items:
+        conn.execute(
+            "INSERT OR IGNORE INTO Pedido_Producto VALUES (?, ?, ?, ?)",
+            (pedido.id_pedido, item.id_producto, item.cantidad, item.precio_unitario)
+        )
+    conn.commit()
+
+# -------------------------
+# Programa principal
+# -------------------------
+if _name_ == "_main_":
+    print(f"Usando entorno: {ENV} -> {DB_FILE}")
+    conn = init_db()
+
+    cliente = Cliente(nombre="María López", email="maria@example.com", puntos_fidelidad=100)
+    empleado = Empleado(nombre="Carlos García", rol="Barista", turno="Mañana")
+    prod1 = Producto(nombre="Café Latte", tipo="Bebida", precio=2.75)
+    prod2 = Producto(nombre="Croissant", tipo="Pastelería", precio=1.50)
+
+    pedido = Pedido(
+        id_cliente=cliente.id_cliente,
+        id_empleado=empleado.id_empleado,
+        items=[
+            PedidoItem(id_producto=prod1.id_producto, cantidad=2, precio_unitario=2.75),
+            PedidoItem(id_producto=prod2.id_producto, cantidad=1, precio_unitario=1.50)
+        ]
+    )
+
+    with conn:
+        insert_cliente(conn, cliente)
+        insert_empleado(conn, empleado)
+        insert_producto(conn, prod1)
+        insert_producto(conn, prod2)
+        insert_pedido(conn, pedido)
+
+    print(f"✅ Pedido insertado correctamente en {DB_FILE}")
+    print(f"Total: {pedido.calcular_total():.2f} €")
+
+    conn.close()
