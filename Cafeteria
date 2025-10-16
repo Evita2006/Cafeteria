@@ -1,0 +1,10 @@
+import os
+
+ENV = os.getenv("SMARTCOFFEE_ENV", "dev")  # dev, test, prod
+DB_PATHS = {
+    "dev": "data/smartcoffee_dev.db",
+    "test": "data/smartcoffee_test.db",
+    "prod": "data/smartcoffee_prod.db"
+}
+
+DB_FILE = DB_PATHS.get(ENV, DB_PATHS["dev"])
